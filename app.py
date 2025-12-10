@@ -6,55 +6,78 @@ from io import BytesIO
 import datetime
 
 
-# -----------------------------------------------------------
-# CSV 파일 로드 함수 (오류 원인 출력)
-# -----------------------------------------------------------
+# --------------------------------------------------------
+# CSV 로드 & 필요한 column 자동 매핑
+# --------------------------------------------------------
 def load_products():
-    possible_paths = [
-        "products.csv",
-        "./products.csv",
-        os.path.join(os.getcwd(), "products.csv")
-    ]
+    possible_paths = ["products.csv", "./products.csv", os.path.join(os.getcwd(), "products.csv")]
 
-    for path in possible_paths:
-        if os.path.exists(path):
-            try:
-                df = pd.read_csv(path, encoding="utf-8")
-                return df
-            except:
-                try:
-                    df = pd.read_csv(path, encoding="cp949")
-                    return df
-                except Exception as e:
-                    st.error(f"❗ CSV 파일은 존재하지만 읽을 수 없습니다.\n오류 내용: {e}")
-                    return None
+    path_found = None
+    for p in possible_paths:
+        if os.path.exists(p):
+            path_found = p
+            break
 
-    # 여기까지 오면 파일 자체가 없음
-    st.error("❗ products.csv 파일을 찾을 수 없습니다.\n"
-             f"현재 실행 위치: {os.getcwd()}")
-    return None
+    if path_found is None:
+        st.error("❗ products.csv 파일이 없습니다.")
+        return None, None
+
+    # 여러 인코딩으로 로드 시도
+    df = None
+    for enc in ["utf-8", "cp949", "utf-8-sig"]:
+        try:
+            df = pd.read_csv(path_found, encoding=enc)
+            break
+        except:
+            continue
+
+    if df is None:
+        st.error("❗ CSV 파일을 읽을 수 없습니다. 인코딩 오류입니다.")
+        return None, None
+
+    # --------------------------------------------------------
+    # 필요한 column 자동 감지
+    # --------------------------------------------------------
+    columns = df.columns.str.lower()
+
+    # 이름 후보
+    name_cols = ["name", "product", "product_name", "title", "품명"]
+    price_cols = ["price", "cost", "가격"]
+    image_cols = ["image_url", "image", "img", "img_url", "url", "이미지"]
+
+    name_col = next((c for c in columns if c in name_cols), None)
+    price_col = next((c for c in columns if c in price_cols), None)
+    image_col = next((c for c in columns if c in image_cols), None)
+
+    # 실제 df에서 원래 column 이름 찾기
+    mapping = {}
+    if name_col:
+        mapping["name"] = df.columns[columns.tolist().index(name_col)]
+    if price_col:
+        mapping["price"] = df.columns[columns.tolist().index(price_col)]
+    if image_col:
+        mapping["image_url"] = df.columns[columns.tolist().index(image_col)]
+
+    # 필요한 column이 없으면 에러 표시
+    missing = []
+    if "name" not in mapping:
+        missing.append("상품명(name)")
+    if "price" not in mapping:
+        missing.append("가격(price)")
+    if "image_url" not in mapping:
+        missing.append("이미지(image_url)")
+
+    if missing:
+        st.error("❗ CSV 파일에 아래 열이 없습니다:\n" + ", ".join(missing))
+        st.write("현재 CSV 열:", list(df.columns))
+        return None, None
+
+    return df, mapping
 
 
-# -----------------------------------------------------------
-# 세션 초기화
-# -----------------------------------------------------------
-if "page" not in st.session_state:
-    st.session_state.page = "start"
-
-if "cart" not in st.session_state:
-    st.session_state.cart = []
-
-
-# -----------------------------------------------------------
-# 페이지 이동
-# -----------------------------------------------------------
-def go_to(page):
-    st.session_state.page = page
-
-
-# -----------------------------------------------------------
+# --------------------------------------------------------
 # PNG 생성 함수
-# -----------------------------------------------------------
+# --------------------------------------------------------
 def create_png(text):
     img = Image.new("RGB", (800, 400), color="white")
     draw = ImageDraw.Draw(img)
@@ -66,76 +89,89 @@ def create_png(text):
     return buffer
 
 
-# -----------------------------------------------------------
+# --------------------------------------------------------
+# 세션 초기화
+# --------------------------------------------------------
+if "page" not in st.session_state:
+    st.session_state.page = "start"
+
+if "cart" not in st.session_state:
+    st.session_state.cart = []
+
+
+def go_to(page):
+    st.session_state.page = page
+
+
+# --------------------------------------------------------
 # 1. 시작 화면
-# -----------------------------------------------------------
+# --------------------------------------------------------
 def page_start():
     st.title("🎯 미션 선택하기")
-    mission = st.selectbox("미션을 선택하세요.", ["미션 1", "미션 2", "미션 3"])
 
-    if st.button("선택 완료 → 쇼핑 화면으로 이동"):
+    mission = st.selectbox("미션을 선택하세요", ["미션 1", "미션 2", "미션 3"])
+
+    if st.button("선택 완료 → 쇼핑화면"):
         st.session_state.selected_mission = mission
         go_to("shopping")
 
 
-# -----------------------------------------------------------
+# --------------------------------------------------------
 # 2. 쇼핑 화면
-# -----------------------------------------------------------
+# --------------------------------------------------------
 def page_shopping():
     st.title("🛒 쇼핑하기")
 
-    # 🔥 CSV 로드 시도
-    products = load_products()
+    df, mapping = load_products()
 
-    # 파일을 못 읽으면 화면 렌더링 중단
-    if products is None:
+    if df is None:
         st.stop()
 
     cols = st.columns(3)
 
-    for idx, row in products.iterrows():
-        with cols[idx % 3]:
-            st.image(row["image_url"], width=150)
-            st.write(f"**{row['name']}**")
-            st.write(f"💰 가격: {int(row['price']):,}원")
+    for idx, row in df.iterrows():
+        col = cols[idx % 3]
+
+        with col:
+            st.image(row[mapping["image_url"]], width=150)
+
+            st.write(f"**{row[mapping['name']]}**")
+            st.write(f"💰 가격: {int(row[mapping['price']]):,}원")
 
             if st.button("담기", key=f"add_{idx}"):
                 st.session_state.cart.append(row.to_dict())
-                st.success(f"{row['name']} 담김!")
+                st.success("담았습니다!")
+
 
     st.markdown("---")
-
     st.subheader("🧺 장바구니")
-    if len(st.session_state.cart) == 0:
-        st.write("장바구니가 비어 있습니다.")
-    else:
-        total = sum(int(item["price"]) for item in st.session_state.cart)
-        for item in st.session_state.cart:
-            st.write(f"- {item['name']} | {int(item['price']):,}원")
-        st.write(f"**총액: {total:,}원**")
+
+    total = 0
+    for item in st.session_state.cart:
+        total += int(item[mapping["price"]])
+        st.write(f"- {item[mapping['name']]} | {int(item[mapping['price']]):,}원")
+
+    st.write(f"**총 금액: {total:,}원**")
 
     if st.button("구매하기 → 결과 화면"):
         go_to("result")
 
 
-# -----------------------------------------------------------
+# --------------------------------------------------------
 # 3. 결과 화면
-# -----------------------------------------------------------
+# --------------------------------------------------------
 def page_result():
     st.title("📦 구매 결과")
 
-    st.subheader("🛍 구매 품목")
-    if len(st.session_state.cart) == 0:
-        st.write("구매한 물품이 없습니다.")
-    else:
-        for item in st.session_state.cart:
-            st.write(f"- {item['name']} | {int(item['price']):,}원")
+    st.subheader("🛍 구매 목록")
+    for item in st.session_state.cart:
+        st.write(item)
 
     st.markdown("---")
 
-    reason = st.text_area("구매 이유 작성", height=150)
+    reason = st.text_area("구매 이유 작성")
 
-    if st.button("제출(PNG로 저장)"):
+    if st.button("제출(PNG 저장)"):
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         text = f"[구매 이유]\n{reason}\n\n제출 시각: {timestamp}"
         png = create_png(text)
@@ -143,15 +179,15 @@ def page_result():
         st.download_button(
             label="📥 PNG 다운로드",
             data=png,
-            file_name=f"구매이유_{timestamp}.png",
+            file_name=f"reason_{timestamp}.png",
             mime="image/png"
         )
         st.success("제출 완료!")
 
 
-# -----------------------------------------------------------
-# 라우팅
-# -----------------------------------------------------------
+# --------------------------------------------------------
+# 페이지 이동
+# --------------------------------------------------------
 if st.session_state.page == "start":
     page_start()
 elif st.session_state.page == "shopping":
