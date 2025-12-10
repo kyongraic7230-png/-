@@ -57,7 +57,7 @@ def page_shopping():
 
     # CSV 불러오기
     try:
-        products = pd.read_csv("products.csv")
+        products = pd.read_csv("products(1).csv")
     except:
         st.error("❗ products.csv 파일을 불러올 수 없습니다. 같은 폴더에 있는지 확인해주세요.")
         return
